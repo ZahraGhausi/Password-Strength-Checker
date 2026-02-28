@@ -1,475 +1,233 @@
-/* Password Strength Checker
-   - Entropy estimate (bits) based on charset size + length, with simple penalties
-   - Pattern checks: common passwords, sequences, repeats, keyboard walks, dates, leetspeak-ish, etc.
-   - Crack-time estimates (rough)
-*/
+/* ═══════════════════════════════════════════════════
+   ENTROPY — Password Strength Analyzer
+   All analysis runs locally. Zero network calls.
+═══════════════════════════════════════════════════ */
 
-const elPw = document.getElementById("pw");
-const elToggle = document.getElementById("toggle");
-const elMeterFill = document.getElementById("meterFill");
-const elChecks = document.getElementById("checks");
-const elScorePill = document.getElementById("scorePill");
-const elEntropyPill = document.getElementById("entropyPill");
-const elGuessPill = document.getElementById("guessPill");
-const elCrack = document.getElementById("crack");
-
-// Small in-file common list (you can expand it)
-const COMMON = new Set([
-  "password","123456","123456789","12345678","qwerty","abc123","111111","letmein","iloveyou","admin",
-  "welcome","monkey","dragon","football","baseball","login","princess","sunshine","master","shadow",
-  "passw0rd","password1","qwerty123","zaq12wsx","1q2w3e4r","000000","654321","superman","batman",
-  "trustno1","starwars","freedom","hello","whatever"
+// ── Common passwords (top ~200 compressed) ──────────
+const COMMON_PASSWORDS = new Set([
+  "password","123456","12345678","qwerty","abc123","monkey","1234567",
+  "letmein","trustno1","dragon","baseball","iloveyou","master","sunshine",
+  "ashley","bailey","passw0rd","shadow","123123","654321","superman",
+  "qazwsx","michael","football","password1","password123","1234567890",
+  "welcome","admin","login","hello","qwerty123","password2","123456789",
+  "111111","1111111","12345","000000","pass","test","1q2w3e","qwertyuiop",
+  "q1w2e3r4","1qaz2wsx","zxcvbnm","asdfghjkl","qazwsxedc","pokemon",
+  "charlie","donald","diamond","princess","jessica","0987654321","696969",
+  "batman","summer","winter","spring","autumn","flower","ranger","access",
+  "thunder","matrix","starwars","soccer","hockey","harley","ranger",
+  "hunter","hunter2","google","myspace","ginger","cheese","robert",
+  "thomas","andrew","daniel","george","jordan","harley","rangers","dakota",
 ]);
 
-const KEYBOARD_WALKS = [
-  "qwertyuiop", "asdfghjkl", "zxcvbnm",
-  "1234567890", "0987654321"
+// ── Keyboard patterns ───────────────────────────────
+const KEYBOARD_PATTERNS = [
+  "qwerty","qwertyuiop","asdfgh","asdfghjkl","zxcvbn","zxcvbnm",
+  "1qaz","2wsx","3edc","4rfv","5tgb","6yhn","7ujm",
+  "qazwsx","1q2w3e","1q2w3e4r","qweasdzxc","qweasd",
+  "12345","123456","1234567","12345678","123456789","1234567890",
+  "09876","098765","0987654","09876543","098765432","0987654321",
+  "abcdef","abcdefgh","abcdefghij",
 ];
 
-const update = () => {
-  const pw = elPw.value || "";
-  const analysis = analyzePassword(pw);
+// ── Repeated pattern detector ───────────────────────
+function hasRepeatedSequence(pw) {
+  // detect aaa, abcabc, ababab style repetitions
+  if (/(.)\1{2,}/.test(pw)) return true;
+  for (let len = 2; len <= Math.floor(pw.length / 2); len++) {
+    const chunk = pw.slice(0, len);
+    const re = new RegExp(`(${chunk.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}){2,}`,'i');
+    if (re.test(pw)) return true;
+  }
+  return false;
+}
 
-  renderChecks(analysis.checks);
-  renderCrackTimes(analysis);
+// ── Entropy calculation ─────────────────────────────
+function calcPool(pw) {
+  let pool = 0;
+  if (/[a-z]/.test(pw))   pool += 26;
+  if (/[A-Z]/.test(pw))   pool += 26;
+  if (/[0-9]/.test(pw))   pool += 10;
+  if (/[ !"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/.test(pw)) pool += 33;
+  return pool;
+}
 
-  // Meter + pills
-  elMeterFill.style.width = `${analysis.score}%`;
-  elScorePill.textContent = `Score: ${analysis.score}/100 (${analysis.label})`;
-  elEntropyPill.textContent = `Entropy: ${analysis.entropyBits.toFixed(1)} bits`;
-  elGuessPill.textContent = `Guess space: ~${formatBigInt(analysis.guessSpace)} guesses`;
+function calcEntropy(pw) {
+  if (!pw) return 0;
+  const pool = calcPool(pw);
+  return Math.round(Math.log2(Math.pow(pool, pw.length)) * 10) / 10;
+}
+
+// ── Crack time estimate ─────────────────────────────
+// Assume fast offline attack: 10 billion guesses/sec
+function crackTime(entropy) {
+  const guesses = Math.pow(2, entropy);
+  const seconds = guesses / 10e9;
+  if (seconds < 1)           return "instant";
+  if (seconds < 60)          return `${Math.round(seconds)}s`;
+  if (seconds < 3600)        return `${Math.round(seconds/60)}min`;
+  if (seconds < 86400)       return `${Math.round(seconds/3600)}hrs`;
+  if (seconds < 2592000)     return `${Math.round(seconds/86400)}days`;
+  if (seconds < 31536000)    return `${Math.round(seconds/2592000)}mo`;
+  if (seconds < 3153600000)  return `${Math.round(seconds/31536000)}yrs`;
+  return "centuries";
+}
+
+// ── Strength score (0–100) ──────────────────────────
+function strengthScore(pw, entropy, warnings) {
+  let score = Math.min(entropy, 100);
+  score -= warnings.length * 12;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+// ── Strength label + color class ───────────────────
+function strengthMeta(score) {
+  if (score < 20) return { label: "Very Weak",  cls: "strength-bad",  color: "var(--bad)",  pct: 10 };
+  if (score < 40) return { label: "Weak",        cls: "strength-poor", color: "var(--poor)", pct: 28 };
+  if (score < 60) return { label: "Fair",        cls: "strength-ok",   color: "var(--ok)",   pct: 52 };
+  if (score < 80) return { label: "Strong",      cls: "strength-good", color: "var(--good)", pct: 75 };
+  return             { label: "Very Strong",  cls: "strength-great",color: "var(--great)", pct: 100 };
+}
+
+// ── Pattern warnings ────────────────────────────────
+function detectWarnings(pw) {
+  const warnings = [];
+  const lower = pw.toLowerCase();
+  if (COMMON_PASSWORDS.has(lower))
+    warnings.push("⚠ This is a known common password");
+  for (const pat of KEYBOARD_PATTERNS) {
+    if (lower.includes(pat)) {
+      warnings.push(`⚠ Contains keyboard pattern: "${pat}"`);
+      break;
+    }
+  }
+  if (hasRepeatedSequence(pw))
+    warnings.push("⚠ Contains repeated sequences or characters");
+  if (/^\d+$/.test(pw))
+    warnings.push("⚠ All numbers — trivially brute-forced");
+  if (/^[a-zA-Z]+$/.test(pw))
+    warnings.push("⚠ Letters only — missing numbers and symbols");
+  if (pw.length < 8)
+    warnings.push("⚠ Critically short");
+  return warnings;
+}
+
+// ── Suggestions ─────────────────────────────────────
+function buildSuggestions(pw, entropy, checks) {
+  const tips = [];
+  if (!checks.chkLength)  tips.push("Make it at least <strong>12 characters</strong> long.");
+  if (!checks.chkUpper)   tips.push("Add some <strong>uppercase letters</strong>.");
+  if (!checks.chkSymbol)  tips.push("Include <strong>special characters</strong> like !@#$%.");
+  if (!checks.chkNumber)  tips.push("Mix in a few <strong>numbers</strong>.");
+  if (entropy < 60)       tips.push("Consider a random <strong>passphrase</strong>: four random words strung together are highly memorable and very strong.");
+  return tips.length
+    ? "<strong>Suggestions:</strong> " + tips.join(" ")
+    : pw.length > 0
+      ? "<strong>Excellent!</strong> This password scores well across all criteria."
+      : "";
+}
+
+// ═══════════════════════════════════════════════════
+//  DOM logic
+// ═══════════════════════════════════════════════════
+
+const input      = document.getElementById("passwordInput");
+const toggleBtn  = document.getElementById("toggleVisibility");
+const eyeIcon    = document.getElementById("eyeIcon");
+const meterFill  = document.getElementById("meterFill");
+const meterLabel = document.getElementById("meterLabel");
+const warningsEl = document.getElementById("warnings");
+const suggestEl  = document.getElementById("suggestions");
+
+// Stat cards
+const statEntropy = document.getElementById("statEntropy").querySelector(".stat-value");
+const statCrack   = document.getElementById("statCrack").querySelector(".stat-value");
+const statLength  = document.getElementById("statLength").querySelector(".stat-value");
+const statPool    = document.getElementById("statPool").querySelector(".stat-value");
+
+// Check items
+const checkMap = {
+  chkLength:    { el: document.getElementById("chkLength"),    test: pw => pw.length >= 12 },
+  chkUpper:     { el: document.getElementById("chkUpper"),     test: pw => /[A-Z]/.test(pw) },
+  chkLower:     { el: document.getElementById("chkLower"),     test: pw => /[a-z]/.test(pw) },
+  chkNumber:    { el: document.getElementById("chkNumber"),    test: pw => /[0-9]/.test(pw) },
+  chkSymbol:    { el: document.getElementById("chkSymbol"),    test: pw => /[^a-zA-Z0-9]/.test(pw) },
+  chkNoCommon:  { el: document.getElementById("chkNoCommon"),  test: pw => !COMMON_PASSWORDS.has(pw.toLowerCase()) },
+  chkNoPattern: { el: document.getElementById("chkNoPattern"), test: pw => !KEYBOARD_PATTERNS.some(p => pw.toLowerCase().includes(p)) },
+  chkNoRepeat:  { el: document.getElementById("chkNoRepeat"),  test: pw => !hasRepeatedSequence(pw) },
 };
 
-elPw.addEventListener("input", update);
+// Clear all strength classes
+const checker = document.querySelector(".checker");
+const ALL_STRENGTH = ["strength-bad","strength-poor","strength-ok","strength-good","strength-great"];
 
-elToggle.addEventListener("click", () => {
-  const isPw = elPw.type === "password";
-  elPw.type = isPw ? "text" : "password";
-  elToggle.textContent = isPw ? "Hide" : "Show";
-  elToggle.setAttribute("aria-label", isPw ? "Hide password" : "Show password");
+function analyze(pw) {
+  // Clear
+  ALL_STRENGTH.forEach(c => checker.classList.remove(c));
+
+  if (!pw) {
+    meterFill.style.width = "0%";
+    meterFill.style.background = "var(--muted)";
+    meterLabel.textContent = "—";
+    meterLabel.style.color = "var(--muted)";
+    statEntropy.textContent = "—";
+    statCrack.textContent   = "—";
+    statLength.textContent  = "—";
+    statPool.textContent    = "—";
+    Object.values(checkMap).forEach(({el}) => { el.className = "check-item"; });
+    warningsEl.innerHTML = "";
+    suggestEl.innerHTML  = "";
+    return;
+  }
+
+  const entropy  = calcEntropy(pw);
+  const pool     = calcPool(pw);
+  const warnings = detectWarnings(pw);
+
+  // Run checks
+  const checks = {};
+  for (const [key, {el, test}] of Object.entries(checkMap)) {
+    const pass = test(pw);
+    checks[key] = pass;
+    el.className = "check-item " + (pass ? "pass" : "fail");
+  }
+
+  const score  = strengthScore(pw, entropy, warnings);
+  const meta   = strengthMeta(score);
+
+  // Meter
+  meterFill.style.width      = meta.pct + "%";
+  meterFill.style.background = meta.color;
+  meterLabel.textContent     = meta.label;
+  meterLabel.style.color     = meta.color;
+  checker.classList.add(meta.cls);
+
+  // Stats
+  statEntropy.textContent = entropy + " bits";
+  statEntropy.style.color = meta.color;
+  statCrack.textContent   = crackTime(entropy);
+  statCrack.style.color   = meta.color;
+  statLength.textContent  = pw.length;
+  statLength.style.color  = pw.length >= 12 ? "var(--good)" : "var(--bad)";
+  statPool.textContent    = pool;
+  statPool.style.color    = pool >= 70 ? "var(--good)" : pool >= 36 ? "var(--ok)" : "var(--bad)";
+
+  // Warnings
+  warningsEl.innerHTML = warnings
+    .map(w => `<div class="warning-tag">${w}</div>`)
+    .join("");
+
+  // Suggestions
+  suggestEl.innerHTML = buildSuggestions(pw, entropy, checks);
+}
+
+// ── Event listeners ─────────────────────────────────
+input.addEventListener("input", () => analyze(input.value));
+
+toggleBtn.addEventListener("click", () => {
+  const isPassword = input.type === "password";
+  input.type = isPassword ? "text" : "password";
+  eyeIcon.textContent = isPassword ? "🙈" : "👁";
 });
 
-update();
-
-/* ---------------- Core analysis ---------------- */
-
-function analyzePassword(pw) {
-  const checks = [];
-
-  if (pw.length === 0) {
-    return {
-      entropyBits: 0,
-      guessSpace: 0n,
-      score: 0,
-      label: "—",
-      checks: [{
-        level: "warn",
-        title: "Type a password to begin",
-        detail: "This tool evaluates locally in your browser."
-      }],
-      crackTimes: []
-    };
-  }
-
-  // Character set sizing
-  const charset = estimateCharsetSize(pw);
-  let baseEntropy = pw.length * log2(charset);
-
-  // Pattern checks and penalties
-  const lower = pw.toLowerCase();
-  const normalized = normalizeLeet(lower);
-
-  // 1) Too short
-  if (pw.length < 8) {
-    checks.push(bad("Too short", "Use at least 12–16+ characters when possible."));
-    baseEntropy -= 10;
-  } else if (pw.length < 12) {
-    checks.push(warn("Moderate length", "Consider 12–16+ characters (or a passphrase)."));
-  } else {
-    checks.push(ok("Good length", "Longer passwords are significantly harder to crack."));
-  }
-
-  // 2) Character variety
-  const variety = characterVariety(pw);
-  if (variety.classesUsed <= 1) {
-    checks.push(bad("Low character variety", "Mixing character types helps, but length matters more."));
-    baseEntropy -= 8;
-  } else if (variety.classesUsed === 2) {
-    checks.push(warn("Some variety", "Consider adding more variety or increasing length."));
-  } else {
-    checks.push(ok("Good variety", `Uses ${variety.classesUsed} character classes.`));
-  }
-
-  // 3) Common password / dictionary-ish
-  const isCommon = COMMON.has(lower) || COMMON.has(normalized);
-  if (isCommon) {
-    checks.push(bad("Common password", "This appears in common-password lists."));
-    baseEntropy -= 30;
-  } else if (looksDictionaryLike(normalized)) {
-    checks.push(warn("Looks dictionary-like", "Avoid single common words (even with simple substitutions)."));
-    baseEntropy -= 8;
-  } else {
-    checks.push(ok("Not obviously common", "No direct match in the built-in common list."));
-  }
-
-  // 4) Sequences (abcd, 1234)
-  const seq = hasSequence(lower, 4);
-  if (seq) {
-    checks.push(bad("Contains a sequence", `Found a simple sequence (“${seq}”).`));
-    baseEntropy -= 12;
-  } else {
-    checks.push(ok("No simple sequences", "Didn’t detect common straight sequences."));
-  }
-
-  // 5) Repeats (aaaa, abab, etc.)
-  const rep = repeatedPatterns(lower);
-  if (rep) {
-    checks.push(warn("Repeating pattern", `Found repeating chunk (“${rep}”).`));
-    baseEntropy -= 8;
-  } else {
-    checks.push(ok("No obvious repeats", "Didn’t detect simple repeating chunks."));
-  }
-
-  // 6) Keyboard walks (qwerty/asdf/12345)
-  const walk = keyboardWalk(lower);
-  if (walk) {
-    checks.push(bad("Keyboard pattern", `Looks like a keyboard walk (“${walk}”).`));
-    baseEntropy -= 15;
-  } else {
-    checks.push(ok("No keyboard walk", "Didn’t detect qwerty/asdf style runs."));
-  }
-
-  // 7) Dates / years
-  const dateHit = containsDateOrYear(lower);
-  if (dateHit) {
-    checks.push(warn("Contains a date/year", `Found “${dateHit}”. Dates are commonly guessed.`));
-    baseEntropy -= 6;
-  } else {
-    checks.push(ok("No obvious date/year", "Didn’t detect a common year or date format."));
-  }
-
-  // 8) Too many of the same char
-  const mono = highSingleCharShare(pw);
-  if (mono) {
-    checks.push(warn("Low diversity of characters", mono));
-    baseEntropy -= 6;
-  } else {
-    checks.push(ok("Good character diversity", "No single character dominates."));
-  }
-
-  // Clamp entropy to [0, ...]
-  const entropyBits = Math.max(0, baseEntropy);
-
-  // Guess space ~ 2^entropy. Use BigInt with cap for display.
-  const guessSpace = entropyToGuessSpace(entropyBits);
-
-  // Score mapping (tunable)
-  const score = entropyToScore(entropyBits, pw.length, variety.classesUsed, isCommon);
-
-  const label =
-    score < 25 ? "Very weak" :
-    score < 45 ? "Weak" :
-    score < 65 ? "Okay" :
-    score < 80 ? "Strong" : "Very strong";
-
-  const crackTimes = estimateCrackTimes(entropyBits);
-
-  return { entropyBits, guessSpace, score, label, checks, crackTimes };
-}
-
-function estimateCharsetSize(pw) {
-  let hasLower = /[a-z]/.test(pw);
-  let hasUpper = /[A-Z]/.test(pw);
-  let hasDigit = /\d/.test(pw);
-  let hasSymbol = /[^a-zA-Z0-9]/.test(pw);
-
-  // Rough sizes
-  let size = 0;
-  if (hasLower) size += 26;
-  if (hasUpper) size += 26;
-  if (hasDigit) size += 10;
-  if (hasSymbol) size += 33; // printable-ish symbols
-
-  // If empty for some reason, fallback
-  return Math.max(1, size);
-}
-
-function characterVariety(pw) {
-  const classes = [
-    /[a-z]/.test(pw),
-    /[A-Z]/.test(pw),
-    /\d/.test(pw),
-    /[^a-zA-Z0-9]/.test(pw),
-  ];
-  return { classesUsed: classes.filter(Boolean).length };
-}
-
-function normalizeLeet(s) {
-  // Simple leet normalization commonly used in guesses
-  return s
-    .replace(/@/g, "a")
-    .replace(/\$/g, "s")
-    .replace(/0/g, "o")
-    .replace(/1/g, "l")
-    .replace(/!/g, "i")
-    .replace(/3/g, "e")
-    .replace(/5/g, "s")
-    .replace(/7/g, "t");
-}
-
-function looksDictionaryLike(s) {
-  // Heuristic: mostly letters and length between 4-20 and no separators
-  if (!/^[a-z]+$/.test(s)) return false;
-  if (s.length < 4 || s.length > 20) return false;
-
-  // Common suffixes/prefixes that appear in guess patterns
-  const commonAffixes = ["ing","er","ers","ed","s","es","y","ly"];
-  // If it ends with a very common affix, still "dictionary-like"
-  return commonAffixes.some(a => s.endsWith(a)) || true;
-}
-
-function hasSequence(s, minLen = 4) {
-  // detect ascending sequences in letters or digits
-  const sequences = [
-    "abcdefghijklmnopqrstuvwxyz",
-    "0123456789"
-  ];
-
-  for (const seq of sequences) {
-    for (let i = 0; i <= seq.length - minLen; i++) {
-      const chunk = seq.slice(i, i + minLen);
-      if (s.includes(chunk)) return chunk;
-    }
-    // descending
-    const rev = seq.split("").reverse().join("");
-    for (let i = 0; i <= rev.length - minLen; i++) {
-      const chunk = rev.slice(i, i + minLen);
-      if (s.includes(chunk)) return chunk;
-    }
-  }
-
-  return null;
-}
-
-function repeatedPatterns(s) {
-  // detect repeating substrings like "ababab" or "xyzxyz"
-  // Try chunk sizes 1..4
-  for (let size = 1; size <= 4; size++) {
-    for (let start = 0; start + size * 3 <= s.length; start++) {
-      const chunk = s.slice(start, start + size);
-      if (chunk.length < size) continue;
-
-      let count = 1;
-      let idx = start + size;
-      while (s.slice(idx, idx + size) === chunk) {
-        count++;
-        idx += size;
-      }
-      if (count >= 3 && chunk.trim() !== "") {
-        return chunk.repeat(Math.min(3, count));
-      }
-    }
-  }
-  // also detect 4+ same char in a row
-  const m = s.match(/(.)\1{3,}/);
-  if (m) return m[0];
-  return null;
-}
-
-function keyboardWalk(s) {
-  for (const row of KEYBOARD_WALKS) {
-    // check forward and reverse in length 4+
-    for (let L = 4; L <= Math.min(8, row.length); L++) {
-      for (let i = 0; i <= row.length - L; i++) {
-        const chunk = row.slice(i, i + L);
-        if (s.includes(chunk)) return chunk;
-        const rev = chunk.split("").reverse().join("");
-        if (s.includes(rev)) return rev;
-      }
-    }
-  }
-  // diagonals like 1q2w3e4r
-  if (/(?:1q2w|2w3e|3e4r|q1w2e3r4)/.test(s)) return "1q2w…";
-  return null;
-}
-
-function containsDateOrYear(s) {
-  // year 19xx or 20xx
-  const year = s.match(/\b(19\d{2}|20\d{2})\b/);
-  if (year) return year[0];
-
-  // dd/mm/yyyy, mm/dd/yy, yyyy-mm-dd, etc (very rough)
-  const date = s.match(/\b(\d{1,2}[\/\-\.]\d{1,2}([\/\-\.]\d{2,4})?)\b/);
-  if (date) return date[0];
-
-  return null;
-}
-
-function highSingleCharShare(pw) {
-  if (pw.length < 8) return null;
-  const freq = new Map();
-  for (const ch of pw) freq.set(ch, (freq.get(ch) || 0) + 1);
-  const max = Math.max(...freq.values());
-  const share = max / pw.length;
-  if (share >= 0.4) {
-    return `One character makes up ${(share * 100).toFixed(0)}% of the password.`;
-  }
-  return null;
-}
-
-/* ---------------- Entropy / scoring ---------------- */
-
-function log2(x) {
-  return Math.log(x) / Math.log(2);
-}
-
-function entropyToGuessSpace(bits) {
-  // guesses ~ 2^bits, but BigInt exponentiation needs integer exponent.
-  // We'll approximate by splitting integer + fractional.
-  const intBits = Math.floor(bits);
-  const frac = bits - intBits;
-
-  // Cap exponent to keep BigInt reasonable in UI (still huge)
-  const cap = 4096; // beyond this, it's already astronomically large
-  const safeBits = Math.min(intBits, cap);
-  let base = 1n << BigInt(safeBits);
-
-  // Multiply by 2^frac (approx) using float factor, then to BigInt
-  const factor = Math.pow(2, frac);
-  const approx = BigInt(Math.floor(Number.MAX_SAFE_INTEGER)); // fallback in case
-  // Convert carefully: if base is too large for Number, we keep BigInt only for integer part.
-  // We'll just return base for huge values; fractional doesn't matter.
-  if (safeBits >= 52) return base;
-
-  // For smaller, we can scale
-  const scaled = BigInt(Math.floor(Number(base) * factor));
-  return scaled > 0n ? scaled : base || 1n;
-}
-
-function entropyToScore(bits, length, classesUsed, isCommon) {
-  // Base score from bits (roughly: 0..100 around 0..80 bits)
-  let s = Math.round((bits / 80) * 100);
-
-  // Length bonuses / penalties
-  if (length >= 16) s += 8;
-  if (length >= 20) s += 6;
-  if (length < 10) s -= 8;
-
-  // Variety small nudge
-  if (classesUsed >= 3) s += 4;
-  if (classesUsed === 1) s -= 6;
-
-  // Common password hammer
-  if (isCommon) s = Math.min(s, 15);
-
-  return clamp(s, 0, 100);
-}
-
-function clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-
-function estimateCrackTimes(entropyBits) {
-  // guesses = 2^bits. time = guesses / rate
-  // Offline rates vary wildly. Provide a few scenarios:
-  const rates = [
-    { label: "10K guesses/sec (slow)", r: 1e4 },
-    { label: "100M guesses/sec (fast GPU)", r: 1e8 },
-    { label: "10B guesses/sec (very fast)", r: 1e10 },
-  ];
-
-  const guesses = Math.pow(2, Math.min(entropyBits, 120)); // float cap
-  // For >120 bits, time is effectively "astronomical" for our display
-  const capped = entropyBits > 120;
-
-  return rates.map(({label, r}) => {
-    if (capped) return { label, seconds: Infinity };
-    const sec = guesses / r;
-    return { label, seconds: sec };
-  });
-}
-
-/* ---------------- Rendering ---------------- */
-
-function renderChecks(checks) {
-  elChecks.innerHTML = "";
-  for (const c of checks) {
-    const li = document.createElement("li");
-    li.className = "check";
-
-    const badge = document.createElement("div");
-    badge.className = `badge ${c.level}`;
-    badge.textContent = c.level === "ok" ? "✓" : (c.level === "warn" ? "!" : "×");
-
-    const text = document.createElement("div");
-    const title = document.createElement("strong");
-    title.textContent = c.title;
-    const detail = document.createElement("span");
-    detail.textContent = c.detail;
-
-    text.appendChild(title);
-    text.appendChild(detail);
-
-    li.appendChild(badge);
-    li.appendChild(text);
-    elChecks.appendChild(li);
-  }
-}
-
-function renderCrackTimes(analysis) {
-  elCrack.innerHTML = "";
-  for (const row of analysis.crackTimes) {
-    const div = document.createElement("div");
-    div.className = "crackRow";
-    const k = document.createElement("div");
-    k.className = "k";
-    k.textContent = row.label;
-
-    const v = document.createElement("div");
-    v.className = "v";
-    v.textContent = formatDuration(row.seconds);
-
-    div.appendChild(k);
-    div.appendChild(v);
-    elCrack.appendChild(div);
-  }
-}
-
-/* ---------------- Helpers ---------------- */
-
-function ok(title, detail) { return { level: "ok", title, detail }; }
-function warn(title, detail) { return { level: "warn", title, detail }; }
-function bad(title, detail) { return { level: "bad", title, detail }; }
-
-function formatBigInt(n) {
-  if (typeof n !== "bigint") return String(n);
-  if (n === 0n) return "0";
-  const s = n.toString();
-  if (s.length <= 4) return s;
-  // 1.23e+45 style
-  const head = s.slice(0, 3);
-  const exp = s.length - 1;
-  return `${head[0]}.${head.slice(1)}e+${exp}`;
-}
-
-function formatDuration(seconds) {
-  if (!isFinite(seconds)) return "astronomical";
-  if (seconds < 1) return "< 1 second";
-
-  const units = [
-    ["year", 365 * 24 * 3600],
-    ["day", 24 * 3600],
-    ["hour", 3600],
-    ["minute", 60],
-    ["second", 1]
-  ];
-
-  let s = seconds;
-  for (const [name, size] of units) {
-    if (s >= size) {
-      const v = Math.floor(s / size);
-      return `${v.toLocaleString()} ${name}${v === 1 ? "" : "s"}`;
-    }
-  }
-  return `${Math.round(seconds)} seconds`;
-}
+// Focus input on load
+window.addEventListener("DOMContentLoaded", () => input.focus());
