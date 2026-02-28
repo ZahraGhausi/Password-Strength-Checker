@@ -1,69 +1,108 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Password Strength Checker</title>
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Entropy — Password Strength Analyzer</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
 </head>
 <body>
-  <main class="wrap">
-    <header class="header">
-      <h1>Password Strength Checker</h1>
-      <p class="sub">
-        Estimates entropy, flags common patterns, and gives rough crack-time ranges.
-        Runs entirely in your browser.
-      </p>
-    </header>
+  <div class="noise"></div>
 
-    <section class="card">
-      <label class="label" for="pw">Enter a password</label>
+  <header>
+    <div class="logo">ENTROPY</div>
+    <div class="tagline">Password Strength Analyzer</div>
+  </header>
 
-      <div class="row">
-        <input id="pw" type="password" autocomplete="new-password" spellcheck="false" placeholder="Type here…" />
-        <button id="toggle" class="btn" type="button" aria-label="Show password">Show</button>
-      </div>
-
-      <div class="meter">
-        <div id="meterFill" class="meter__fill" style="width: 0%"></div>
-      </div>
-
-      <div class="summary">
-        <div class="pill" id="scorePill">Score: —</div>
-        <div class="pill" id="entropyPill">Entropy: —</div>
-        <div class="pill" id="guessPill">Guess space: —</div>
-      </div>
-
-      <div class="grid">
-        <div class="panel">
-          <h2>Checks</h2>
-          <ul id="checks" class="checks"></ul>
-        </div>
-
-        <div class="panel">
-          <h2>Crack-time (very rough)</h2>
-          <div id="crack" class="crack"></div>
-          <p class="tiny">
-            Assumes offline cracking. Online rate-limited guessing is typically far slower.
-          </p>
-        </div>
-      </div>
-
-      <details class="details">
-        <summary>Tips for improving strength</summary>
-        <ul class="tips">
-          <li>Prefer a long passphrase (16+ chars) over a short complex password.</li>
-          <li>Avoid names, dates, seasons, sports teams, and predictable substitutions (e.g., <code>@</code> for <code>a</code>).</li>
-          <li>Don’t reuse passwords; use a password manager.</li>
-          <li>Enable MFA where possible.</li>
-        </ul>
-      </details>
+  <main>
+    <section class="hero">
+      <h1>How <em>strong</em><br>is your password?</h1>
+      <p class="sub">We analyze entropy, character variety, and common attack patterns — all locally in your browser. Nothing is sent anywhere.</p>
     </section>
 
-    <footer class="footer">
-      <span>Client-side only • No tracking</span>
-    </footer>
+    <section class="checker">
+      <div class="input-wrap">
+        <input type="password" id="passwordInput" placeholder="Type a password…" autocomplete="off" spellcheck="false" />
+        <button id="toggleVisibility" aria-label="Toggle visibility">
+          <span id="eyeIcon">👁</span>
+        </button>
+      </div>
+
+      <div class="meter-wrap">
+        <div class="meter-track">
+          <div class="meter-fill" id="meterFill"></div>
+        </div>
+        <div class="meter-label" id="meterLabel">—</div>
+      </div>
+
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card" id="statEntropy">
+          <div class="stat-value">—</div>
+          <div class="stat-name">Entropy (bits)</div>
+        </div>
+        <div class="stat-card" id="statCrack">
+          <div class="stat-value">—</div>
+          <div class="stat-name">Est. crack time</div>
+        </div>
+        <div class="stat-card" id="statLength">
+          <div class="stat-value">—</div>
+          <div class="stat-name">Length</div>
+        </div>
+        <div class="stat-card" id="statPool">
+          <div class="stat-value">—</div>
+          <div class="stat-name">Char pool</div>
+        </div>
+      </div>
+
+      <div class="checks" id="checks">
+        <div class="check-item" id="chkLength">
+          <span class="dot"></span> At least 12 characters
+        </div>
+        <div class="check-item" id="chkUpper">
+          <span class="dot"></span> Uppercase letters
+        </div>
+        <div class="check-item" id="chkLower">
+          <span class="dot"></span> Lowercase letters
+        </div>
+        <div class="check-item" id="chkNumber">
+          <span class="dot"></span> Numbers
+        </div>
+        <div class="check-item" id="chkSymbol">
+          <span class="dot"></span> Special characters
+        </div>
+        <div class="check-item" id="chkNoCommon">
+          <span class="dot"></span> Not a common password
+        </div>
+        <div class="check-item" id="chkNoPattern">
+          <span class="dot"></span> No keyboard patterns
+        </div>
+        <div class="check-item" id="chkNoRepeat">
+          <span class="dot"></span> No repeated sequences
+        </div>
+      </div>
+
+      <div class="warnings" id="warnings"></div>
+
+      <div class="suggestions" id="suggestions"></div>
+    </section>
+
+    <section class="explainer">
+      <h2>What is entropy?</h2>
+      <p>Password entropy measures unpredictability. It's calculated as <code>log₂(poolSize<sup>length</sup>)</code>. A pool of 95 printable ASCII characters and a 16-character password yields ~105 bits — extremely strong. Patterns and common words drastically reduce effective entropy even if the password looks complex.</p>
+      <div class="entropy-scale">
+        <div class="scale-item bad">0–35 bits<span>Weak</span></div>
+        <div class="scale-item poor">36–59 bits<span>Fair</span></div>
+        <div class="scale-item ok">60–79 bits<span>Good</span></div>
+        <div class="scale-item good">80–99 bits<span>Strong</span></div>
+        <div class="scale-item great">100+ bits<span>Very Strong</span></div>
+      </div>
+    </section>
   </main>
+
+  <footer>
+    <p>All analysis runs locally. Zero data leaves your device. &nbsp;·&nbsp; Built with ❤ + JS</p>
+  </footer>
 
   <script src="script.js"></script>
 </body>
