@@ -1,1 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Password Strength Checker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="header">
+      <h1>Password Strength Checker</h1>
+      <p class="sub">
+        Estimates entropy, flags common patterns, and gives rough crack-time ranges.
+        Runs entirely in your browser.
+      </p>
+    </header>
 
+    <section class="card">
+      <label class="label" for="pw">Enter a password</label>
+
+      <div class="row">
+        <input id="pw" type="password" autocomplete="new-password" spellcheck="false" placeholder="Type here…" />
+        <button id="toggle" class="btn" type="button" aria-label="Show password">Show</button>
+      </div>
+
+      <div class="meter">
+        <div id="meterFill" class="meter__fill" style="width: 0%"></div>
+      </div>
+
+      <div class="summary">
+        <div class="pill" id="scorePill">Score: —</div>
+        <div class="pill" id="entropyPill">Entropy: —</div>
+        <div class="pill" id="guessPill">Guess space: —</div>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <h2>Checks</h2>
+          <ul id="checks" class="checks"></ul>
+        </div>
+
+        <div class="panel">
+          <h2>Crack-time (very rough)</h2>
+          <div id="crack" class="crack"></div>
+          <p class="tiny">
+            Assumes offline cracking. Online rate-limited guessing is typically far slower.
+          </p>
+        </div>
+      </div>
+
+      <details class="details">
+        <summary>Tips for improving strength</summary>
+        <ul class="tips">
+          <li>Prefer a long passphrase (16+ chars) over a short complex password.</li>
+          <li>Avoid names, dates, seasons, sports teams, and predictable substitutions (e.g., <code>@</code> for <code>a</code>).</li>
+          <li>Don’t reuse passwords; use a password manager.</li>
+          <li>Enable MFA where possible.</li>
+        </ul>
+      </details>
+    </section>
+
+    <footer class="footer">
+      <span>Client-side only • No tracking</span>
+    </footer>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
